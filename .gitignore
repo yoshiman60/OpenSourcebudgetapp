@@ -1,0 +1,19 @@
+# Keep personal data out of git, even if a file lands in this folder by accident
+
+# Backups and bank files
+backups/
+*.json
+!manifest.json
+*.csv
+*.pdf
+*.ofx
+*.qfx
+
+# Test files and the upload copy
+_*
+budgetapp-upload/
+
+# Editor and system clutter
+.DS_Store
+Thumbs.db
+.vscode/

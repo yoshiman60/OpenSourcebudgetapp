@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <!-- Security: only this app's own files (and the checked pdf.js) may run, and the app
+       can't send data anywhere else, even if a booby-trapped file slipped something in -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; worker-src 'self' blob:; connect-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#121212">
+  <title>Budget</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Lock screen (only when the app lock is on; see lock.js) -->
+  <div id="lock-screen" hidden>
+    <form id="unlock-form">
+      <h1>Budget</h1>
+      <p class="muted">Locked</p>
+      <label for="unlock-passcode">Passcode</label>
+      <input id="unlock-passcode" type="password" autocomplete="current-password" required>
+      <button type="submit" id="unlock-btn">Unlock</button>
+      <p id="unlock-error" class="small" role="alert"></p>
+      <button type="button" id="unlock-erase" class="link-danger">Forgot the passcode? Erase everything</button>
+    </form>
+  </div>
+
+  <header class="topbar">
+    <span id="page-title">Home</span>
+    <button type="button" id="settings-btn" class="icon-btn" aria-label="Settings" data-tab="settings">⚙</button>
+  </header>
+
+  <main>
+
+    <!-- ===== Home tab: dashboard + quick add ===== -->
+    <div class="tab" id="tab-home">
+      <section class="card hero">
+        <p class="muted">Left this pay period</p>
+        <p class="big" id="money-left">—</p>
+        <p class="hero-sub"><span id="days-left">—</span> days to payday · <span id="safe-per-day">—</span>/day safe</p>
+        <button type="button" id="status-pill" class="status-pill" hidden></button>
+        <button type="button" id="home-save-btn" class="secondary">Save to a goal</button>
+        <p id="home-notes" class="muted small"></p>
+      </section>
+
+      <section class="card nudge" id="save-nudge" hidden>
+        <p id="save-nudge-text"></p>
+        <div class="row">
+          <button type="button" id="save-nudge-yes">Yes</button>
+          <button type="button" id="save-nudge-no" class="secondary">Not now</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Add expense</h2>
+        <label for="expense-amount">Amount</label>
+        <input id="expense-amount" type="number" inputmode="decimal" step="0.01" min="0.01" placeholder="$0.00">
+        <p class="hint">Tap a category to save.</p>
+        <div id="category-chips" class="chips"></div>
+        <details class="more">
+          <summary>Add a note or change the date</summary>
+          <label for="expense-note">Note</label>
+          <input id="expense-note" type="text" placeholder="Optional">
+          <label for="expense-date">Date</label>
+          <input id="expense-date" type="date">
+        </details>
+        <div id="recent-wrap" hidden>
+          <p class="muted small">Recent (tap to add again today):</p>
+          <div id="recent-chips" class="chips"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>This pay period</h2>
+        <div id="category-bars"></div>
+      </section>
+
+      <section class="card" id="tips-card" hidden>
+        <h2>Tips for you</h2>
+        <ul id="tips-list" class="list tips"></ul>
+      </section>
+
+      <section class="card">
+        <details class="more">
+          <summary>Can I afford it?</summary>
+          <label for="afford-amount">Price ($)</label>
+          <input id="afford-amount" type="number" inputmode="decimal" step="0.01" min="0">
+          <div id="afford-result"></div>
+        </details>
+      </section>
+    </div>
+
+    <!-- ===== History tab ===== -->
+    <div class="tab" id="tab-history" hidden>
+      <section class="card">
+        <h2>History</h2>
+        <div id="history-period-chips" class="chips"></div>
+        <div id="history-category-chips" class="chips"></div>
+        <p id="history-total" class="muted small"></p>
+        <ul id="history-list" class="list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Spending breakdown</h2>
+        <div id="pie-wrap" class="pie-wrap">
+          <div id="pie" class="pie"></div>
+          <ul id="pie-legend" class="legend"></ul>
+        </div>
+        <p id="pie-empty" class="muted">No spending to show yet.</p>
+      </section>
+    </div>
+
+    <!-- ===== Budget tab: categories, goal, bills, funds, IOUs ===== -->
+    <div class="tab" id="tab-budget" hidden>
+      <section class="card">
+        <h2>Categories</h2>
+        <ul id="category-list" class="list"></ul>
+        <p id="planned-total" class="muted small"></p>
+        <form id="category-form" class="row">
+          <div>
+            <label for="category-name" class="visually-hidden">New category name</label>
+            <input id="category-name" placeholder="New category" required>
+          </div>
+          <div>
+            <label for="category-planned" class="visually-hidden">Planned amount ($)</label>
+            <input id="category-planned" type="number" inputmode="decimal" step="0.01" min="0" placeholder="Planned $">
+          </div>
+          <button type="submit" class="small-btn">Add</button>
+        </form>
+      </section>
+
+      <section class="card" id="goals-card">
+        <h2>Savings goals</h2>
+        <p id="savings-summary" class="muted small"></p>
+        <ul id="goal-list" class="list goals"></ul>
+        <div class="row">
+          <button type="button" id="open-goal-dialog" class="secondary">+ New goal</button>
+          <button type="button" id="open-withdraw-dialog" class="secondary">Withdraw</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Bills</h2>
+        <ul id="bill-list" class="list"></ul>
+        <button type="button" id="open-bill-dialog" class="secondary">+ Add bill</button>
+      </section>
+
+      <section class="card">
+        <h2>Semester funds</h2>
+        <ul id="fund-list" class="list"></ul>
+        <button type="button" id="open-fund-dialog" class="secondary">+ Add fund</button>
+      </section>
+
+      <section class="card">
+        <h2>IOUs</h2>
+        <p id="iou-totals" class="muted"></p>
+        <ul id="iou-list" class="list"></ul>
+        <button type="button" id="open-iou-dialog" class="secondary">+ Add IOU</button>
+      </section>
+    </div>
+
+    <!-- ===== Pay tab: forecast, paychecks, extra income, bank import ===== -->
+    <div class="tab" id="tab-pay" hidden>
+      <section class="card" id="forecast-card">
+        <h2>Forecast</h2>
+        <p class="hint">Your next paydays: what you'll likely be paid, what goes out, and what's left until the next one. Tap a payday to see the math or change its pay.</p>
+        <p id="fc-range" class="muted small"></p>
+
+        <div id="fc-timeline"></div>
+
+        <p class="muted small">What if you work more or less before your next payday?</p>
+        <div class="whatif">
+          <button type="button" id="fc-minus" class="secondary">−1 shift</button>
+          <span id="fc-whatif-label"></span>
+          <button type="button" id="fc-plus" class="secondary">+1 shift</button>
+        </div>
+
+        <h3>Upcoming shifts</h3>
+        <form id="shift-form" class="row">
+          <div>
+            <label for="shift-date">Date</label>
+            <input id="shift-date" type="date" required>
+          </div>
+          <div>
+            <label for="shift-hours">Hours</label>
+            <input id="shift-hours" type="number" inputmode="decimal" step="0.25" min="0.25" required>
+          </div>
+          <button type="submit">Add shift</button>
+        </form>
+        <ul id="shift-list" class="list"></ul>
+
+        <details class="more" id="fc-settings">
+          <summary>Forecast settings</summary>
+          <label for="fc-rate">Pay per hour ($)</label>
+          <input id="fc-rate" type="number" inputmode="decimal" step="0.01" min="0">
+
+          <label for="fc-takehome-input">Take-home pay (% of hours × pay per hour)</label>
+          <input id="fc-takehome-input" type="number" inputmode="numeric" step="1" min="1" max="100" placeholder="Auto">
+          <p id="fc-takehome" class="muted small"></p>
+
+          <label for="fc-spending-input">Spending per pay period ($)</label>
+          <input id="fc-spending-input" type="number" inputmode="decimal" step="0.01" min="0" placeholder="Auto">
+          <p id="fc-spending-note" class="muted small"></p>
+
+          <label for="fc-lag">Days between the end of a work period and payday</label>
+          <input id="fc-lag" type="number" inputmode="numeric" step="1" min="0" max="14">
+          <p class="muted small">If shifts up to a Friday are paid the next Thursday, enter 6. Use 0 if a paycheck covers the 2 weeks right before it.</p>
+
+          <label for="fc-count">Paydays to show</label>
+          <select id="fc-count">
+            <option value="4">4</option>
+            <option value="6">6</option>
+            <option value="8">8</option>
+          </select>
+
+          <button type="button" id="fc-reset" class="secondary">Reset forecast settings</button>
+        </details>
+
+        <details class="more">
+          <summary>How the forecast works</summary>
+          <ol class="fc-help">
+            <li><strong>Pay:</strong> the hours of the shifts you enter × your pay per hour × your take-home %. The app learns the take-home % by comparing past shifts with the paychecks they turned into. With no shifts for a payday, it uses the average of your last 4 paychecks. You can also type the pay for any payday yourself.</li>
+            <li><strong>Out:</strong> bills due before the next payday, semester fund amounts, your usual spending, and any pay advances that will be taken back.</li>
+            <li><strong>Left:</strong> what's left now, plus pay, minus what goes out, carried from one payday to the next.</li>
+            <li><strong>Could go negative:</strong> what's left would drop below $0 if this paycheck turned out as low as your lowest recent one.</li>
+          </ol>
+        </details>
+      </section>
+
+      <section class="card">
+        <h2>Paychecks</h2>
+        <p class="next-payday">Next payday: <strong id="next-payday">—</strong></p>
+        <form id="paycheck-form">
+          <div class="row">
+            <div>
+              <label for="paycheck-amount">Amount ($)</label>
+              <input id="paycheck-amount" type="number" inputmode="decimal" step="0.01" min="0.01" required>
+            </div>
+            <div>
+              <label for="paycheck-date">Date</label>
+              <input id="paycheck-date" type="date" required>
+            </div>
+          </div>
+          <button type="submit">Add paycheck</button>
+        </form>
+        <ul id="paycheck-list" class="list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Extra income</h2>
+        <form id="income-form">
+          <div class="row">
+            <div>
+              <label for="income-amount">Amount ($)</label>
+              <input id="income-amount" type="number" inputmode="decimal" step="0.01" min="0.01" required>
+            </div>
+            <div>
+              <label for="income-date">Date</label>
+              <input id="income-date" type="date" required>
+            </div>
+          </div>
+          <label for="income-note">Note</label>
+          <input id="income-note" placeholder="Tips">
+          <button type="submit">Add income</button>
+        </form>
+        <ul id="income-list" class="list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Import from your bank</h2>
+        <p class="hint">Pick a CSV or PDF from your bank.</p>
+        <label for="bank-file" class="button-like">Choose CSV or PDF</label>
+        <input id="bank-file" type="file" accept=".csv,text/csv,.pdf,application/pdf" hidden>
+
+        <details class="more" id="paste-box">
+          <summary>No statement yet? Paste transactions</summary>
+          <p class="muted small">Open your bank's website or app, select your recent activity, copy it and paste it here.</p>
+          <label for="paste-text">Pasted transactions</label>
+          <textarea id="paste-text" rows="6" placeholder="Nov 12  Acme Payroll  +$250.00&#10;Nov 12  Coffee Shop  -$5.40"></textarea>
+          <button type="button" id="paste-review">Review transactions</button>
+        </details>
+
+        <div id="bank-review" hidden>
+          <details class="more">
+            <summary>Columns look wrong?</summary>
+            <div class="row">
+              <div>
+                <label for="map-date">Date column</label>
+                <select id="map-date"></select>
+              </div>
+              <div>
+                <label for="map-desc">Description column</label>
+                <select id="map-desc"></select>
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label for="map-amount">Amount column</label>
+                <select id="map-amount"></select>
+              </div>
+              <div>
+                <label for="map-credit">Money-in column</label>
+                <select id="map-credit"></select>
+              </div>
+            </div>
+            <div class="check">
+              <input type="checkbox" id="map-flip">
+              <label for="map-flip">My bank shows spending as positive numbers</label>
+            </div>
+          </details>
+          <p id="bank-summary" class="muted small"></p>
+          <ul id="bank-list" class="list"></ul>
+          <div class="row">
+            <button type="button" id="bank-cancel" class="secondary">Cancel</button>
+            <button type="button" id="bank-import">Import</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ===== Settings tab (opened with the ⚙ button) ===== -->
+    <div class="tab" id="tab-settings" hidden>
+      <section class="card">
+        <h2>Settings</h2>
+        <label for="frequency">I get paid</label>
+        <select id="frequency">
+          <option value="7">Weekly</option>
+          <option value="14">Every two weeks</option>
+        </select>
+
+        <label for="rollover">Money left at the end of a pay period</label>
+        <select id="rollover">
+          <option value="off">Do nothing</option>
+          <option value="next">Carry it into the next pay period</option>
+          <option value="savings">Move it to savings</option>
+        </select>
+
+        <label for="low-warning-setting">Warn me when safe-to-spend per day is below ($, 0 = off)</label>
+        <input id="low-warning-setting" type="number" inputmode="decimal" step="0.01" min="0">
+
+        <label for="spotme-limit">SpotMe / overdraft limit ($, blank = none)</label>
+        <input id="spotme-limit" type="number" inputmode="decimal" step="0.01" min="0">
+
+        <label for="spotme-cushion">Keep this much SpotMe free in "Can I afford it?" ($)</label>
+        <input id="spotme-cushion" type="number" inputmode="decimal" step="0.01" min="0">
+
+        <div class="check">
+          <input type="checkbox" id="roundup-enabled">
+          <label for="roundup-enabled">Round up each expense to the next $1 and save the change</label>
+        </div>
+        <label for="roundup-goal">Round-ups go to</label>
+        <select id="roundup-goal"></select>
+      </section>
+
+      <section class="card">
+        <h2>Match my bank balance</h2>
+        <p class="hint">Type what your bank app shows now. Use a minus sign if it's negative.</p>
+        <label for="balance-actual">Real bank balance ($)</label>
+        <div class="row">
+          <input id="balance-actual" type="text" inputmode="decimal" placeholder="-25.00">
+          <button type="button" id="balance-match" class="small-btn">Match</button>
+        </div>
+        <ul id="adjustment-list" class="list"></ul>
+      </section>
+
+      <section class="card" id="lock-card">
+        <h2>App lock</h2>
+        <p id="lock-status" class="muted small"></p>
+
+        <form id="lock-on-form">
+          <p class="muted small">Locks the app with a passcode and encrypts your data on this device. If you forget the passcode, your data can't be recovered, so download a backup first.</p>
+          <label for="lock-new">New passcode (at least 6 characters)</label>
+          <input id="lock-new" type="password" autocomplete="new-password" required>
+          <label for="lock-confirm">Type it again</label>
+          <input id="lock-confirm" type="password" autocomplete="new-password" required>
+          <button type="submit">Turn on lock</button>
+        </form>
+
+        <div id="lock-on-controls" hidden>
+          <button type="button" id="lock-now" class="secondary">Lock now</button>
+          <form id="lock-change-form">
+            <label for="lock-current">Current passcode</label>
+            <input id="lock-current" type="password" autocomplete="current-password" required>
+            <label for="lock-change-new">New passcode</label>
+            <input id="lock-change-new" type="password" autocomplete="new-password">
+            <label for="lock-change-confirm">Type the new passcode again</label>
+            <input id="lock-change-confirm" type="password" autocomplete="new-password">
+            <div class="row">
+              <button type="submit">Change passcode</button>
+              <button type="button" id="lock-off" class="secondary">Turn off lock</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Backup &amp; restore</h2>
+        <p class="muted small">Your data only lives on this device. Save a backup now and then.</p>
+
+        <!-- Backup folder (Chrome/Edge on a computer) -->
+        <div id="folder-controls" hidden>
+          <p id="folder-status" class="muted small"></p>
+          <div class="row">
+            <button type="button" id="folder-pick" class="secondary">Choose backup folder</button>
+            <button type="button" id="folder-save">Save backup to folder</button>
+          </div>
+        </div>
+        <p id="folder-unsupported" class="muted small" hidden>This browser can't open folders, so backups download and you pick files to restore.</p>
+
+        <div class="row">
+          <button type="button" id="export-btn" class="secondary">Download backup</button>
+          <label for="import-file" class="button-like">Open backup files</label>
+        </div>
+        <input id="import-file" type="file" accept=".json,application/json" multiple hidden>
+        <ul id="backup-list" class="list"></ul>
+      </section>
+
+      <section class="card danger-zone">
+        <button type="button" id="erase-btn" class="danger">Erase all data</button>
+      </section>
+    </div>
+  </main>
+
+  <button type="button" id="fab" class="fab" aria-label="Add expense">+</button>
+
+  <nav class="tabbar" aria-label="Main">
+    <button type="button" data-tab="home" class="active">Home</button>
+    <button type="button" data-tab="history">History</button>
+    <button type="button" data-tab="budget">Budget</button>
+    <button type="button" data-tab="pay">Pay</button>
+  </nav>
+
+  <!-- Quick add pop-up (opened with the + button) -->
+  <dialog id="quick-add-dialog">
+    <form id="quick-add-form">
+      <h2>Add expense</h2>
+      <label for="qa-amount">Amount ($)</label>
+      <input id="qa-amount" type="number" inputmode="decimal" step="0.01" min="0.01">
+      <p class="hint">Tap a category to save.</p>
+      <div id="qa-chips" class="chips"></div>
+      <button type="button" id="qa-save-instead" class="link-btn">Save to a goal instead</button>
+      <label for="qa-note">Note</label>
+      <input id="qa-note" placeholder="Optional">
+      <label for="qa-date">Date</label>
+      <input id="qa-date" type="date">
+      <button type="button" class="secondary dialog-cancel">Cancel</button>
+    </form>
+  </dialog>
+
+  <dialog id="bill-dialog">
+    <form id="bill-form">
+      <h2>Add bill</h2>
+      <label for="bill-name">Name</label>
+      <input id="bill-name" placeholder="Phone" required>
+      <div class="row">
+        <div>
+          <label for="bill-amount">Amount ($)</label>
+          <input id="bill-amount" type="number" inputmode="decimal" step="0.01" min="0.01" required>
+        </div>
+        <div>
+          <label for="bill-day">Due day (1–31)</label>
+          <input id="bill-day" type="number" inputmode="numeric" min="1" max="31" required>
+        </div>
+      </div>
+      <label for="bill-category">Category</label>
+      <select id="bill-category"></select>
+      <div class="row">
+        <button type="button" class="secondary dialog-cancel">Cancel</button>
+        <button type="submit">Add bill</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="fund-dialog">
+    <form id="fund-form">
+      <h2>Add semester fund</h2>
+      <label for="fund-name">Name</label>
+      <input id="fund-name" placeholder="Textbooks" required>
+      <div class="row">
+        <div>
+          <label for="fund-goal">Goal ($)</label>
+          <input id="fund-goal" type="number" inputmode="decimal" step="0.01" min="0.01" required>
+        </div>
+        <div>
+          <label for="fund-per">Per paycheck ($)</label>
+          <input id="fund-per" type="number" inputmode="decimal" step="0.01" min="0.01" required>
+        </div>
+      </div>
+      <div class="row">
+        <button type="button" class="secondary dialog-cancel">Cancel</button>
+        <button type="submit">Add fund</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="iou-dialog">
+    <form id="iou-form">
+      <h2>Add IOU</h2>
+      <div class="row">
+        <div>
+          <label for="iou-person">Friend</label>
+          <input id="iou-person" required>
+        </div>
+        <div>
+          <label for="iou-amount">Amount ($)</label>
+          <input id="iou-amount" type="number" inputmode="decimal" step="0.01" min="0.01" required>
+        </div>
+      </div>
+      <label for="iou-direction">Who owes?</label>
+      <select id="iou-direction">
+        <option value="them">They owe me</option>
+        <option value="me">I owe them</option>
+      </select>
+      <label for="iou-note">Note</label>
+      <input id="iou-note" placeholder="Pizza">
+      <div class="row">
+        <button type="button" class="secondary dialog-cancel">Cancel</button>
+        <button type="submit">Add IOU</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="save-dialog">
+    <form id="save-form">
+      <h2>Save to a goal</h2>
+      <label for="save-amount">Amount ($)</label>
+      <input id="save-amount" type="number" inputmode="decimal" step="0.01" min="0.01" required>
+      <label for="save-goal">Goal</label>
+      <select id="save-goal"></select>
+      <label for="save-note">Note</label>
+      <input id="save-note" placeholder="Optional">
+      <div class="row">
+        <button type="button" class="secondary dialog-cancel">Cancel</button>
+        <button type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="withdraw-dialog">
+    <form id="withdraw-form">
+      <h2>Withdraw from a goal</h2>
+      <label for="withdraw-goal">Goal</label>
+      <select id="withdraw-goal"></select>
+      <label for="withdraw-amount">Amount ($)</label>
+      <input id="withdraw-amount" type="number" inputmode="decimal" step="0.01" min="0.01" required>
+      <label for="withdraw-note">What's it for?</label>
+      <input id="withdraw-note" placeholder="Car repair" required>
+      <div class="row">
+        <button type="button" class="secondary dialog-cancel">Cancel</button>
+        <button type="submit">Withdraw</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="goal-dialog">
+    <form id="goal-form">
+      <h2 id="goal-dialog-title">New goal</h2>
+      <input id="goal-form-id" type="hidden">
+      <label for="goal-form-name">Name</label>
+      <input id="goal-form-name" placeholder="Emergency fund" required>
+      <div class="row">
+        <div>
+          <label for="goal-form-target">Target ($, optional)</label>
+          <input id="goal-form-target" type="number" inputmode="decimal" step="0.01" min="0">
+        </div>
+        <div>
+          <label for="goal-form-date">Target date (optional)</label>
+          <input id="goal-form-date" type="date">
+        </div>
+      </div>
+      <div id="goal-form-actual-wrap" hidden>
+        <label for="goal-form-actual">Actual balance now ($, optional)</label>
+        <input id="goal-form-actual" type="number" inputmode="decimal" step="0.01" placeholder="What this savings really has">
+      </div>
+      <div class="check">
+        <input type="checkbox" id="goal-form-default">
+        <label for="goal-form-default">Default goal (bank savings transfers and leftovers go here)</label>
+      </div>
+      <div class="row">
+        <button type="button" class="secondary dialog-cancel">Cancel</button>
+        <button type="submit">Save goal</button>
+      </div>
+      <button type="button" id="goal-delete" class="link-danger">Delete goal</button>
+    </form>
+  </dialog>
+
+  <!-- Edit expense pop-up -->
+  <dialog id="edit-dialog">
+    <form id="edit-form">
+      <h2>Edit expense</h2>
+      <label for="edit-amount">Amount ($)</label>
+      <input id="edit-amount" type="number" inputmode="decimal" step="0.01" min="0.01" required>
+      <label for="edit-category">Category</label>
+      <select id="edit-category"></select>
+      <label for="edit-note">Note</label>
+      <input id="edit-note">
+      <label for="edit-date">Date</label>
+      <input id="edit-date" type="date" required>
+      <div class="row">
+        <button type="button" id="edit-cancel" class="secondary">Cancel</button>
+        <button type="submit">Save</button>
+      </div>
+      <button type="button" id="edit-delete" class="link-danger">Delete expense</button>
+    </form>
+  </dialog>
+
+  <!-- "Deleted · Undo" message -->
+  <div id="toast" hidden>
+    <span id="toast-message"></span>
+    <button id="toast-undo">Undo</button>
+  </div>
+
+  <!-- Passcode pop-up (for restoring a locked backup) -->
+  <dialog id="passcode-dialog">
+    <form method="dialog">
+      <h2 id="passcode-dialog-title">Passcode</h2>
+      <label for="passcode-input">Passcode</label>
+      <input id="passcode-input" type="password" autocomplete="current-password">
+      <div class="row">
+        <button value="cancel" class="secondary">Cancel</button>
+        <button value="ok">OK</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+  <script src="lock.js"></script>
+  <script src="savings.js"></script>
+  <script src="forecast.js"></script>
+  <script src="tips.js"></script>
+  <script src="bank.js"></script>
+  <script src="backups.js"></script>
+</body>
+</html>
