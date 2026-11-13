@@ -378,7 +378,8 @@ function createRoundUp(expense) {
     note: `Round-up: ${expense.note || categoryName(expense.categoryId)}`,
     date: expense.date,
     goalId: goal.id,
-    saveKind: 'roundup'
+    saveKind: 'roundup',
+    roundUpOf: expense.id
   };
   data.expenses.push(roundUp);
   return roundUp;

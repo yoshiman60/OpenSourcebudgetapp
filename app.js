@@ -299,6 +299,14 @@ function getNextPayday() {
 }
 
 // Put the latest paycheck's amount in the form, since it's usually similar
+// The payday after your latest paycheck, if it has come without a new paycheck logged (null otherwise)
+function missedPayday() {
+  const latest = sortedPaychecks().find(p => p.date <= today());
+  if (!latest) return null;
+  const expected = addDays(latest.date, data.payFrequencyDays);
+  return expected <= today() ? expected : null;
+}
+
 function fillLastAmount() {
   const latest = sortedPaychecks()[0];
   $('paycheck-amount').value = latest ? centsToInput(latest.amountCents) : '';
@@ -311,7 +319,9 @@ function fillLastAmount() {
 function getPeriods() {
   const pays = data.paychecks.filter(p => p.date <= today()).sort((a, b) => a.date.localeCompare(b.date));
   // The current period ends at the predicted payday, or sooner if a paycheck is already logged for an earlier day
-  const nextPayday = [getNextPayday(), ...data.paychecks.map(p => p.date).filter(d => d > today())].sort()[0];
+  // A missed payday ends the period tomorrow, so the next pay period's bills aren't charged to this paycheck
+  const predicted = missedPayday() ? addDays(today(), 1) : getNextPayday();
+  const nextPayday = [predicted, ...data.paychecks.map(p => p.date).filter(d => d > today())].sort()[0];
   return pays.map((p, i) => ({
     id: String(p.id),
     start: p.date,
@@ -327,7 +337,9 @@ function billDatesInPeriod(bill, period) {
   const end = parseDate(period.end);
   while (day < end) {
     const lastDayOfMonth = new Date(day.getFullYear(), day.getMonth() + 1, 0).getDate();
-    if (day.getDate() === Math.min(bill.dueDay, lastDayOfMonth)) dates.push(toDateString(day));
+    const date = toDateString(day);
+    // Bills count from the day they were added (older bills without a date count from the start)
+    if (day.getDate() === Math.min(bill.dueDay, lastDayOfMonth) && !(bill.createdDate && date < bill.createdDate)) dates.push(date);
     day.setDate(day.getDate() + 1);
   }
   return dates;
@@ -338,14 +350,15 @@ function billDatesInPeriod(bill, period) {
 function summarize() {
   const periods = getPeriods();
   const fundSaved = {};
-  data.funds.forEach(f => fundSaved[f.id] = 0);
+  const fundSpent = {}; // paid out of each fund by expenses marked "Paid from semester fund"
+  data.funds.forEach(f => { fundSaved[f.id] = 0; fundSpent[f.id] = 0; });
   let carry = 0;
   let savedFromLeftovers = 0;
 
   periods.forEach((p, i) => {
     const inPeriod = item => item.date >= p.start && item.date < p.end;
 
-    p.carryInCents = data.rollover === 'next' ? carry : 0;
+    p.carryInCents = carry; // only negatives carry unless rollover is "next" (see below)
     p.extraCents = sum(data.income.filter(inPeriod), x => x.amountCents);
     p.adjustCents = sum(data.adjustments.filter(inPeriod), x => x.amountCents);
 
@@ -374,13 +387,22 @@ function summarize() {
       fundSaved[f.id] += add;
       p.fundCents += add;
     });
+    // An expense paid from a fund uses the fund's saved money instead of this paycheck
+    expenses.filter(e => e.fundId).forEach(e => {
+      const f = data.funds.find(x => String(x.id) === String(e.fundId));
+      if (!f) return;
+      const use = Math.max(Math.min(e.amountCents, fundSaved[f.id] - fundSpent[f.id]), 0);
+      fundSpent[f.id] += use;
+      p.fundCents -= use;
+    });
 
     p.leftCents = p.paycheckCents + p.extraCents + p.adjustCents + p.carryInCents - p.expenseCents - p.billCents - p.fundCents;
 
     // Leftovers from finished periods roll forward (or into savings)
     const isCurrent = i === periods.length - 1;
     if (!isCurrent) {
-      carry = p.leftCents;
+      // Going under (SpotMe/overdraft) always comes out of the next paycheck; leftovers only roll with "next"
+      carry = data.rollover === 'next' ? p.leftCents : Math.min(p.leftCents, 0);
       if (data.rollover === 'savings' && p.leftCents > 0) savedFromLeftovers += p.leftCents;
     }
   });
@@ -392,7 +414,7 @@ function summarize() {
   const savingsCents = savedFromLeftovers - takenOutCents + data.savingsAdjustCents +
     (savingsCategory ? sum(periods, p => p.spentByCategory[String(savingsCategory.id)] || 0) : 0);
 
-  return { periods, current: periods[periods.length - 1] || null, fundSaved, savedFromLeftovers, savingsCents };
+  return { periods, current: periods[periods.length - 1] || null, fundSaved, fundSpent, savedFromLeftovers, savingsCents };
 }
 
 // How many finished pay periods in a row (most recent first) ended with money left
@@ -489,10 +511,14 @@ function removeWithUndo(listName, id) {
   const index = list.findIndex(item => String(item.id) === String(id));
   if (index === -1) return;
   const [removed] = list.splice(index, 1);
+  // Deleting an expense also deletes its round-up
+  const roundUps = listName === 'expenses' ? list.filter(e => e.roundUpOf !== undefined && String(e.roundUpOf) === String(id)) : [];
+  if (roundUps.length) data.expenses = list.filter(e => !roundUps.includes(e));
   saveData();
   render();
   showToast('Removed.', () => {
     data[listName].splice(index, 0, removed);
+    if (roundUps.length) data.expenses.push(...roundUps);
     saveData();
     render();
   });
@@ -580,6 +606,8 @@ function renderHome(summary) {
     if (data.lowWarningCents > 0 && safePerDay < data.lowWarningCents) {
       messages.push(`Only ${formatMoney(safePerDay)} a day until payday`);
     }
+    const missed = missedPayday();
+    if (missed) messages.unshift(`${missed === today() ? 'Payday today' : 'Payday was ' + formatDate(missed)}: add your paycheck →`);
     pill.hidden = messages.length === 0;
     pill.className = 'status-pill ' + level;
     pill.textContent = messages.join(' · ');
@@ -777,11 +805,12 @@ function renderBudget(summary) {
 
   $('fund-list').innerHTML = data.funds.map(f => {
     const saved = summary.fundSaved[f.id] || 0;
+    const spent = summary.fundSpent[f.id] || 0;
     const done = saved >= f.goalCents;
     return listItem(
       `${escapeHtml(f.name)}${done ? ' · Done!' : ''}
        ${progressBar(saved / f.goalCents, 'green')}
-       <div class="muted small">${formatMoney(saved)} of ${formatMoney(f.goalCents)} · ${formatMoney(f.perPaycheckCents)} per paycheck</div>`,
+       <div class="muted small">${formatMoney(saved)} of ${formatMoney(f.goalCents)} · ${formatMoney(f.perPaycheckCents)} per paycheck${spent ? ` · ${formatMoney(spent)} spent` : ''}</div>`,
       deleteButton('funds', f.id)
     );
   }).join('');
@@ -889,7 +918,7 @@ onSubmit('bill-form', 'bills', () => {
   const amountCents = dollarsToCents($('bill-amount').value);
   const dueDay = parseInt($('bill-day').value, 10);
   if (!(amountCents > 0) || !(dueDay >= 1 && dueDay <= 31)) return null;
-  return { name: $('bill-name').value.trim(), amountCents, dueDay, categoryId: $('bill-category').value };
+  return { name: $('bill-name').value.trim(), amountCents, dueDay, categoryId: $('bill-category').value, createdDate: today() };
 });
 
 onSubmit('fund-form', 'funds', () => {
@@ -966,7 +995,7 @@ $('fab').addEventListener('click', openQuickAdd);
 
 // Status pill only does something when there's no paycheck yet
 $('status-pill').addEventListener('click', () => {
-  if (lastSummary.current) return;
+  if (lastSummary.current && !missedPayday()) return;
   showTab('pay');
   $('paycheck-amount').focus();
 });
@@ -1081,6 +1110,10 @@ function openEditDialog(id) {
   if (!$('edit-category').value) $('edit-category').selectedIndex = 0; // its category was deleted
   $('edit-note').value = expense.note || '';
   $('edit-date').value = expense.date;
+  $('edit-fund-wrap').hidden = data.funds.length === 0;
+  $('edit-fund').innerHTML = '<option value="">No</option>' +
+    data.funds.map(f => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.name)}</option>`).join('');
+  $('edit-fund').value = expense.fundId ? String(expense.fundId) : '';
   $('edit-dialog').showModal();
 }
 
@@ -1093,6 +1126,15 @@ $('edit-form').addEventListener('submit', e => {
   expense.categoryId = $('edit-category').value;
   expense.note = $('edit-note').value.trim();
   expense.date = $('edit-date').value || expense.date;
+  if ($('edit-fund').value) expense.fundId = $('edit-fund').value;
+  else delete expense.fundId;
+  // Keep its round-up matching the new amount
+  const roundUp = data.expenses.find(x => x.roundUpOf !== undefined && String(x.roundUpOf) === String(expense.id));
+  if (roundUp) {
+    const change = 100 - (cents % 100);
+    if (change === 100) data.expenses = data.expenses.filter(x => x !== roundUp);
+    else { roundUp.amountCents = change; roundUp.date = expense.date; }
+  }
   saveData();
   $('edit-dialog').close();
   render();

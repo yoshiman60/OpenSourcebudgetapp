@@ -39,7 +39,8 @@ function convertToBill(list) {
     name: latest.note,
     amountCents: latest.amountCents,
     dueDay: parseDate(latest.date).getDate(),
-    categoryId: latest.categoryId
+    categoryId: latest.categoryId,
+    createdDate: list.reduce((a, b) => (a.date < b.date ? a : b)).date // it replaces these expenses, so it starts with the first one
   });
   data.expenses = data.expenses.filter(e => !list.includes(e));
   saveData();
