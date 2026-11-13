@@ -67,9 +67,9 @@ function cleanItem(item) {
     } else if (key === 'targetDate') {
       clean[key] = isDate(value) ? value : null;
     } else if (key === 'hours' || key === 'dueDay') {
-      const n = Number(value);
+      const n = key === 'dueDay' ? Math.round(Number(value)) : Number(value);
       if (!Number.isFinite(n) || n <= 0) return null;
-      clean[key] = key === 'dueDay' ? Math.min(Math.round(n), 31) : n;
+      clean[key] = key === 'dueDay' ? Math.min(n, 31) : n;
     } else if (typeof value === 'boolean' || value === null) {
       clean[key] = value;
     } else if (typeof value === 'number') {
@@ -94,6 +94,18 @@ function sanitizeData(d) {
   const lists = ['paychecks', 'income', 'categories', 'expenses', 'bills', 'funds', 'ious', 'adjustments', 'shifts', 'goals'];
   for (const key of lists) {
     if (key in d) d[key] = Array.isArray(d[key]) ? d[key].map(cleanItem).filter(Boolean) : [];
+  }
+  // Fields the app always expects: drop or fill them in so a damaged file can't crash it
+  for (const key of ['paychecks', 'income', 'expenses', 'adjustments', 'shifts', 'ious']) {
+    if (key in d) d[key] = d[key].filter(x => isDate(x.date));
+  }
+  for (const key of lists) {
+    if (!(key in d)) continue;
+    d[key].forEach(x => {
+      if (x.id === undefined) x.id = newId();
+      if (['paychecks', 'income', 'expenses', 'adjustments', 'ious'].includes(key)) x.amountCents = toCents(x.amountCents);
+      if (['categories', 'bills', 'funds', 'goals'].includes(key)) x.name = String(x.name ?? '');
+    });
   }
   for (const key of Object.keys(d)) {
     if (key.endsWith('Cents')) d[key] = toCents(d[key]);
@@ -176,7 +188,13 @@ function prepareData(parsed) {
 function saveData() {
   if (waitingForUnlock) return; // never overwrite locked data with the empty placeholder
   if (lockIsOn()) saveLocked(JSON.stringify(data)); // lock.js encrypts it first
-  else localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  else {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch {
+      alert("Couldn't save: this device's storage is full. Download a backup now.");
+    }
+  }
 }
 
 let data = loadData();
@@ -186,9 +204,12 @@ let data = loadData();
 // Shortcut for document.getElementById
 const $ = id => document.getElementById(id);
 
-// "12.34" -> 1234 (NaN if it isn't a number)
+// "12.34", "$1,234.5" -> cents (NaN if it isn't a number, or over $10 million)
 function dollarsToCents(text) {
-  return Math.round(parseFloat(text) * 100);
+  const t = String(text ?? '').replace(/[$,\s]/g, '');
+  if (!/^[-+]?(\d+\.?\d*|\.\d+)$/.test(t)) return NaN;
+  const cents = Math.round(Number((Number(t) * 100).toFixed(4))); // toFixed avoids 1.005 -> 100
+  return Math.abs(cents) <= 1e9 ? cents : NaN;
 }
 
 // 1234 -> "12.34" (for putting back into an input)
@@ -264,8 +285,9 @@ function sortedPaychecks() {
 }
 
 // Next payday = latest paycheck + frequency, stepped forward until it's after today
+// (a paycheck dated in the future doesn't count until its day)
 function getNextPayday() {
-  const latest = sortedPaychecks()[0];
+  const latest = sortedPaychecks().find(p => p.date <= today());
   if (!latest) return null;
 
   const now = parseDate(today());
@@ -287,8 +309,9 @@ function fillLastAmount() {
 // The newest one ends the day before the predicted next payday.
 
 function getPeriods() {
-  const pays = [...data.paychecks].sort((a, b) => a.date.localeCompare(b.date));
-  const nextPayday = getNextPayday();
+  const pays = data.paychecks.filter(p => p.date <= today()).sort((a, b) => a.date.localeCompare(b.date));
+  // The current period ends at the predicted payday, or sooner if a paycheck is already logged for an earlier day
+  const nextPayday = [getNextPayday(), ...data.paychecks.map(p => p.date).filter(d => d > today())].sort()[0];
   return pays.map((p, i) => ({
     id: String(p.id),
     start: p.date,
@@ -1025,6 +1048,7 @@ $('erase-btn').addEventListener('click', () => {
   if (!confirm('Erase everything in this app and start over? Export a backup first if you might want it back.')) return;
   data = defaultData();
   saveData();
+  localStorage.removeItem(STORAGE_KEY + '-unreadable');
   historyPeriod = null;
   historyCategory = 'all';
   document.querySelectorAll('form').forEach(form => form.reset());
@@ -1054,6 +1078,7 @@ function openEditDialog(id) {
   editingId = id;
   $('edit-amount').value = centsToInput(expense.amountCents);
   $('edit-category').value = String(expense.categoryId);
+  if (!$('edit-category').value) $('edit-category').selectedIndex = 0; // its category was deleted
   $('edit-note').value = expense.note || '';
   $('edit-date').value = expense.date;
   $('edit-dialog').showModal();

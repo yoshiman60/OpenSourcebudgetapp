@@ -272,7 +272,7 @@
         <h2>Import from your bank</h2>
         <p class="hint">Pick a CSV or PDF from your bank.</p>
         <label for="bank-file" class="button-like">Choose CSV or PDF</label>
-        <input id="bank-file" type="file" accept=".csv,text/csv,.pdf,application/pdf" hidden>
+        <input id="bank-file" type="file" accept=".csv,text/csv,.pdf,application/pdf" class="visually-hidden">
 
         <details class="more" id="paste-box">
           <summary>No statement yet? Paste transactions</summary>
@@ -413,7 +413,7 @@
           <button type="button" id="export-btn" class="secondary">Download backup</button>
           <label for="import-file" class="button-like">Open backup files</label>
         </div>
-        <input id="import-file" type="file" accept=".json,application/json" multiple hidden>
+        <input id="import-file" type="file" accept=".json,application/json" multiple class="visually-hidden">
         <ul id="backup-list" class="list"></ul>
       </section>
 
@@ -465,7 +465,7 @@
         </div>
       </div>
       <label for="bill-category">Category</label>
-      <select id="bill-category"></select>
+      <select id="bill-category" required></select>
       <div class="row">
         <button type="button" class="secondary dialog-cancel">Cancel</button>
         <button type="submit">Add bill</button>
@@ -599,7 +599,7 @@
       <label for="edit-date">Date</label>
       <input id="edit-date" type="date" required>
       <div class="row">
-        <button type="button" id="edit-cancel" class="secondary">Cancel</button>
+        <button type="button" id="edit-cancel" class="secondary dialog-cancel">Cancel</button>
         <button type="submit">Save</button>
       </div>
       <button type="button" id="edit-delete" class="link-danger">Delete expense</button>
@@ -607,9 +607,9 @@
   </dialog>
 
   <!-- "Deleted · Undo" message -->
-  <div id="toast" hidden>
+  <div id="toast" role="status" aria-live="polite" hidden>
     <span id="toast-message"></span>
-    <button id="toast-undo">Undo</button>
+    <button type="button" id="toast-undo">Undo</button>
   </div>
 
   <!-- Passcode pop-up (for restoring a locked backup) -->
@@ -619,7 +619,7 @@
       <label for="passcode-input">Passcode</label>
       <input id="passcode-input" type="password" autocomplete="current-password">
       <div class="row">
-        <button value="cancel" class="secondary">Cancel</button>
+        <button type="button" class="secondary dialog-cancel">Cancel</button>
         <button value="ok">OK</button>
       </div>
     </form>

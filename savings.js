@@ -41,7 +41,7 @@ function isDefaultGoal(goal) {
 
 // Money taken out of savings outside the app (e.g. imported "Transfer From Chime Savings")
 function isUntaggedTakeOut(income) {
-  return !income.goalId && /from .*savings/i.test(income.note || '');
+  return !income.goalId && (income.fromSavings === true || /from .*savings/i.test(income.note || ''));
 }
 
 // Expenses that count toward a goal (its tagged saves, plus untagged Savings expenses for the default goal)
@@ -533,8 +533,10 @@ $('open-withdraw-dialog').addEventListener('click', () => {
 $('home-save-btn').addEventListener('click', () => openSaveDialog());
 
 $('qa-save-instead').addEventListener('click', () => {
+  const typed = $('qa-amount').value;
   $('quick-add-dialog').close();
   openSaveDialog();
+  $('save-amount').value = typed;
 });
 
 // Buttons drawn inside the goal list

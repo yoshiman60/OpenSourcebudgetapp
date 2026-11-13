@@ -81,7 +81,7 @@ function saveLocked(text) {
       localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(STORAGE_KEY + '-unreadable');
     })
-    .catch(() => {});
+    .catch(() => alert("Couldn't save: this device's storage may be full. Download a backup now."));
 }
 
 // What a backup file contains: locked with your passcode when the lock is on
@@ -128,12 +128,14 @@ $('unlock-form').addEventListener('submit', async e => {
   }
   error.textContent = 'Unlocking…';
   $('unlock-btn').disabled = true;
+  let opened = null;
   try {
-    const { text, key, salt } = await decryptBox(storedBox(), passcode);
-    lockKey = key;
-    lockSalt = salt;
+    opened = await decryptBox(storedBox(), passcode);
+    const loaded = prepareData(JSON.parse(opened.text)); // before anything changes, in case it's damaged
+    lockKey = opened.key;
+    lockSalt = opened.salt;
     failedTries = 0;
-    data = prepareData(JSON.parse(text));
+    data = loaded;
     waitingForUnlock = false;
     $('lock-screen').hidden = true;
     document.body.classList.remove('locked');
@@ -141,6 +143,11 @@ $('unlock-form').addEventListener('submit', async e => {
     setFormDefaults();
     render();
   } catch {
+    if (opened) {
+      error.textContent = 'The passcode is right, but the saved data is damaged. Erase and restore a backup.';
+      $('unlock-btn').disabled = false;
+      return;
+    }
     failedTries++;
     // After 5 wrong tries, each new try has to wait a bit longer
     if (failedTries >= 5) triesBlockedUntil = Date.now() + 30000 * (failedTries - 4);
@@ -155,6 +162,7 @@ $('unlock-erase').addEventListener('click', () => {
   if (!confirm('Are you sure? This can\'t be undone.')) return;
   localStorage.removeItem(LOCKED_KEY);
   localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(STORAGE_KEY + '-unreadable');
   location.reload();
 });
 
@@ -237,6 +245,7 @@ $('lock-off').addEventListener('click', async () => {
   }
   lockKey = null;
   lockSalt = null;
+  await saveQueue; // a locked save started during the check must finish first
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   localStorage.removeItem(LOCKED_KEY);
   $('lock-change-form').reset();

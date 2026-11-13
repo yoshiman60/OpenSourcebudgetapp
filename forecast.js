@@ -109,7 +109,9 @@ function expectedSpending(summary) {
   const custom = forecastSettings().spendingCents;
   if (custom !== null) return { cents: custom, how: 'the amount you set' };
 
-  const planned = sum(data.categories, c => c.plannedCents);
+  // Bills are subtracted on their own, so leave them out of the planned amounts
+  const planned = sum(data.categories, c => Math.max(c.plannedCents -
+    sum(data.bills.filter(b => String(b.categoryId) === String(c.id)), b => b.amountCents), 0));
   if (planned > 0) return { cents: planned, how: 'your planned category amounts' };
 
   const finished = summary ? summary.periods.slice(0, -1).slice(-3) : [];
@@ -166,7 +168,10 @@ function firstForecastPayday() {
   if (next) return next;
   const upcoming = allShifts().filter(s => s.date >= today()).map(s => s.date).sort();
   const first = upcoming[0] || allShifts().map(s => s.date).sort().pop();
-  return first ? addDays(first, data.payFrequencyDays + forecastSettings().payLagDays) : null;
+  if (!first) return null;
+  let payday = addDays(first, data.payFrequencyDays + forecastSettings().payLagDays);
+  while (payday < today()) payday = addDays(payday, data.payFrequencyDays); // never a payday that's already past
+  return payday;
 }
 
 // Works out every payday in the forecast. Each one includes what it's based on,
@@ -230,7 +235,7 @@ function buildForecast(summary, takeHome) {
     const whatIf = i === 0 && !custom ? whatIfCents(takeHome) : 0;
     income = Math.max(income + whatIf, 0);
     // Worst case: paid as little as your lowest recent paycheck (unless you set the amount)
-    const worstIncome = custom || !range ? income : Math.min(range.min, income);
+    const worstIncome = custom || !range ? income : Math.max(Math.min(range.min, income - whatIf) + whatIf, 0);
 
     const billsDue = data.bills
       .map(b => ({ name: b.name, cents: billDatesInPeriod(b, { start: payday, end: periodEnd }).length * b.amountCents }))

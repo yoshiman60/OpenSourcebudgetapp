@@ -75,22 +75,29 @@ function parseBankAmount(text) {
   if (!t) return 0;
   let negative = false;
   if (/^\(.*\)$/.test(t)) { negative = true; t = t.slice(1, -1); }
-  t = t.replace(/[$,\s]/g, '');
+  if (/\bDR\b/i.test(t)) negative = true; // "12.00 DR" = money out
+  t = t.replace(/[$,\s]|\b(CR|DR|USD)\b/gi, '');
   if (t.startsWith('-')) { negative = true; t = t.slice(1); }
   if (t.endsWith('-')) { negative = true; t = t.slice(0, -1); }
   const cents = dollarsToCents(t);
   return negative ? -cents : cents;
 }
 
+// A real calendar date as "YYYY-MM-DD", or null for things like 02/31 or month 25
+function realDate(year, month, day) {
+  const d = new Date(year, month - 1, day);
+  return d.getMonth() === month - 1 && d.getDate() === day ? toDateString(d) : null;
+}
+
 // "11/05/2026", "11/5/26" or "2026-11-05" -> "2026-11-05" (null if it isn't a date)
 function parseBankDate(text) {
   const t = String(text || '').trim();
   let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (m) return toDateString(new Date(+m[1], m[2] - 1, +m[3]));
+  if (m) return realDate(+m[1], +m[2], +m[3]);
   m = t.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
   if (m) {
     const year = +m[3] < 100 ? +m[3] + 2000 : +m[3];
-    return toDateString(new Date(year, m[1] - 1, +m[2]));
+    return realDate(year, +m[1], +m[2]);
   }
   return null;
 }
@@ -289,7 +296,8 @@ function finishBankImport() {
       data.paychecks.push({ id: newId(), amountCents, date: t.date });
     } else if (t.choice === 'income') {
       const advance = ADVANCE_WORDS.test(t.description); // remembered for the "pay it back" tip
-      data.income.push({ id: newId(), amountCents, date: t.date, note: t.merchant, advance });
+      const fromSavings = /from .*savings/i.test(t.description); // the shortened store name can lose "Savings"
+      data.income.push({ id: newId(), amountCents, date: t.date, note: t.merchant, advance, fromSavings });
     } else {
       data.expenses.push({ id: newId(), amountCents, categoryId: t.choice, note: t.merchant, date: t.date, fromBank: true });
       data.merchantRules[t.merchant] = t.choice; // use this category next time
@@ -450,9 +458,11 @@ async function startPdfImport(file) {
   try {
     lines = await pdfToLines(file);
   } catch {
-    alert("Couldn't read that PDF. Check your internet connection the first time you import a PDF, or use a CSV.");
+    $('bank-summary').textContent = '';
+    alert("Couldn't read that PDF. Make sure it's a real statement PDF (not renamed or damaged), and that you're online the first time you import one. Or use a CSV.");
     return;
   }
+  $('bank-summary').textContent = '';
   if (lines.length === 0) {
     alert('This PDF has no text in it (it may be a scan). Download the statement or a CSV from online banking instead.');
     return;
@@ -478,10 +488,10 @@ const MONEY_IN_WORDS = /payroll|direct dep|deposit|refund|received|cash ?out|rev
 // A date with no year gets this year (or last year, if that would put it in the future)
 function dateWithYear(year, month, day) {
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  if (year) return toDateString(new Date(year < 100 ? year + 2000 : year, month - 1, day));
+  if (year) return realDate(year < 100 ? year + 2000 : year, month, day);
   const thisYear = parseDate(today()).getFullYear();
-  const date = toDateString(new Date(thisYear, month - 1, day));
-  return date > addDays(today(), 7) ? toDateString(new Date(thisYear - 1, month - 1, day)) : date;
+  const date = realDate(thisYear, month, day);
+  return date && date > addDays(today(), 7) ? realDate(thisYear - 1, month, day) : date;
 }
 
 // Reads a date at the start of a line: 11/05, 11/05/2026, 2026-11-05, Nov 5, Thu, November 5, 2026, Today, Yesterday.
