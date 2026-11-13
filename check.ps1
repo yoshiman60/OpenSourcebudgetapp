@@ -32,7 +32,15 @@ $ids = [regex]::Matches($html, '\sid="([^"]+)"') | ForEach-Object { $_.Groups[1]
 $dupes = $ids | Group-Object | Where-Object Count -gt 1
 foreach ($d in $dupes) { Write-Host "Duplicate id in index.html: $($d.Name)" -ForegroundColor Red; $ok = $false }
 
-# 5. No personal data files in the folder git would pick up
+# 5. The security rules in index.html and _headers must match
+#    (_headers may add frame-ancestors, which only works as a real header)
+$metaCsp = [regex]::Match($html, 'Content-Security-Policy" content="([^"]+)"').Groups[1].Value
+$headerCsp = [regex]::Match((Get-Content _headers -Raw), 'Content-Security-Policy: (.+)').Groups[1].Value.Trim() -replace "; frame-ancestors 'none'$", ''
+if (-not $metaCsp -or $metaCsp -ne $headerCsp) {
+  Write-Host "The Content-Security-Policy in index.html and _headers don't match" -ForegroundColor Red; $ok = $false
+}
+
+# 6. No personal data files in the folder git would pick up
 $risky = Get-ChildItem -Recurse -File | Where-Object {
   $_.Extension -in '.csv', '.pdf', '.ofx', '.qfx' -or ($_.Extension -eq '.json' -and $_.Name -ne 'manifest.json')
 } | Where-Object { $_.FullName -notmatch '\\\.git\\' }

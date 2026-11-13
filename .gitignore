@@ -11,6 +11,7 @@ backups/
 
 # Test files and the upload copy
 _*
+!_headers
 budgetapp-upload/
 
 # Editor and system clutter

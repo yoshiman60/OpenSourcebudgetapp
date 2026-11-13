@@ -5,7 +5,7 @@
 # Run from the budgetapp folder:  powershell -ExecutionPolicy Bypass -File .\prepare-upload.ps1
 
 $appFiles = @(
-  'index.html', 'style.css', 'manifest.json', 'sw.js',
+  'index.html', 'style.css', 'manifest.json', 'sw.js', '_headers',
   'app.js', 'lock.js', 'savings.js', 'forecast.js', 'tips.js', 'bank.js', 'backups.js',
   'icon-192.png', 'icon-512.png'
 )
