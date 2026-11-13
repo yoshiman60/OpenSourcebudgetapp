@@ -61,3 +61,6 @@ Plain HTML, CSS and JavaScript. No build step and no dependencies, except [pdf.j
 - Publishing and releasing: see [PUBLISHING.md](PUBLISHING.md)
 
 Found a bug or a security problem? Open an issue. Please don't include real bank data or backups in it.
+
+## License
+[MIT](LICENSE): free to use, change and share, as long as you keep the copyright notice.
