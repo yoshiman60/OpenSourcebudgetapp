@@ -116,7 +116,10 @@
     <div class="tab" id="tab-budget" hidden>
       <section class="card">
         <h2>Categories</h2>
+        <p class="muted small">Planned amounts are per paycheck.</p>
+        <button type="button" id="auto-budget-btn" class="secondary">Plan from my spending</button>
         <ul id="category-list" class="list"></ul>
+        <button type="button" id="show-unused" class="link-btn" hidden></button>
         <p id="planned-total" class="muted small"></p>
         <form id="category-form" class="row">
           <div>
@@ -607,6 +610,20 @@
         <button type="submit">Save</button>
       </div>
       <button type="button" id="edit-delete" class="link-danger">Delete expense</button>
+    </form>
+  </dialog>
+
+  <!-- Plan from my spending pop-up -->
+  <dialog id="auto-budget-dialog">
+    <form id="auto-budget-form">
+      <h2>Plan from my spending</h2>
+      <p id="auto-budget-intro" class="muted small"></p>
+      <ul id="auto-budget-list" class="list"></ul>
+      <p id="auto-budget-total" class="small"></p>
+      <div class="row">
+        <button type="button" class="secondary dialog-cancel">Cancel</button>
+        <button type="submit" id="auto-budget-apply">Use these</button>
+      </div>
     </form>
   </dialog>
 

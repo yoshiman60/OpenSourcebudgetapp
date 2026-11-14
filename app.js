@@ -782,20 +782,115 @@ function renderPie(periods) {
   $('pie').style.background = `conic-gradient(${stops.join(', ')})`;
 }
 
+// ===== Plan from my spending =====
+// Suggests each category's plan from what you really spent in your last 3 finished pay periods.
+
+const AUTO_BUDGET_SKIP = ['loans & advances', 'savings']; // repayments and saving aren't spending plans
+let showUnusedCategories = false;
+
+// Average spent per pay period in a category (bills included), over the last 3 finished periods
+function usualSpending(summary, category) {
+  const finished = summary.periods.slice(0, -1).slice(-3);
+  if (finished.length === 0) return 0;
+  return Math.round(sum(finished, p => p.spentByCategory[String(category.id)] || 0) / finished.length);
+}
+
+function budgetSuggestions(summary) {
+  return data.categories
+    .filter(c => !AUTO_BUDGET_SKIP.includes(c.name.trim().toLowerCase()))
+    .map(c => {
+      const usual = usualSpending(summary, c);
+      return { category: c, usual, suggested: usual > 0 ? Math.ceil(usual / 500) * 500 : 0 }; // round up to $5
+    })
+    .filter(s => s.usual > 0 || s.category.plannedCents > 0);
+}
+
+function renderAutoBudgetTotal() {
+  const chosen = {};
+  document.querySelectorAll('[data-auto-cat]').forEach(box => { if (box.checked) chosen[box.dataset.autoCat] = Number(box.dataset.cents); });
+  const total = sum(data.categories, c => chosen[String(c.id)] ?? c.plannedCents);
+  const pay = averageRecentPaycheck(); // forecast.js
+  const over = total - pay;
+  $('auto-budget-total').innerHTML = `New total: <strong>${formatMoney(total)}</strong>` + (pay > 0
+    ? ` of your usual ${formatMoney(pay)} paycheck. ` + (over > 0
+      ? `<span class="over">That's ${formatMoney(over)} more than you get paid. Uncheck or lower some categories.</span>`
+      : `${formatMoney(-over)} left for savings and surprises.`)
+    : '');
+}
+
+$('auto-budget-btn').addEventListener('click', () => {
+  const summary = lastSummary;
+  const finished = Math.min(Math.max(summary.periods.length - 1, 0), 3);
+  if (finished === 0) {
+    alert('You need at least one finished pay period first. Import a bank statement on the Pay tab, or log a couple of weeks of spending.');
+    return;
+  }
+  const suggestions = budgetSuggestions(summary);
+  $('auto-budget-intro').textContent = `Based on your last ${finished} pay period${finished === 1 ? '' : 's'}, rounded up to the next $5. Checked ones will change. Loans & Advances and Savings are left alone.`;
+  $('auto-budget-list').innerHTML = suggestions.length ? suggestions.map((s, i) => {
+    const changes = s.suggested !== s.category.plannedCents;
+    return `<li class="auto-row">
+      <input type="checkbox" id="auto-${i}" data-auto-cat="${escapeHtml(s.category.id)}" data-cents="${s.suggested}" ${changes ? 'checked' : 'disabled'}>
+      <label for="auto-${i}"><strong>${escapeHtml(s.category.name)}</strong>: ${formatMoney(s.category.plannedCents)} → ${formatMoney(s.suggested)}
+        <div class="muted small">You usually spend ${formatMoney(s.usual)}${changes ? '' : ' · already set'}</div></label>
+    </li>`;
+  }).join('') : '<li class="muted">No spending found in your finished pay periods.</li>';
+  renderAutoBudgetTotal();
+  $('auto-budget-dialog').showModal();
+});
+
+$('auto-budget-list').addEventListener('change', renderAutoBudgetTotal);
+
+$('auto-budget-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const before = data.categories.map(c => ({ id: c.id, plannedCents: c.plannedCents }));
+  let count = 0;
+  document.querySelectorAll('[data-auto-cat]').forEach(box => {
+    if (!box.checked) return;
+    findById(data.categories, box.dataset.autoCat).plannedCents = Number(box.dataset.cents);
+    count++;
+  });
+  $('auto-budget-dialog').close();
+  if (count === 0) return;
+  saveData();
+  render();
+  showToast(`Updated ${count} categor${count === 1 ? 'y' : 'ies'}.`, () => {
+    before.forEach(b => { const c = findById(data.categories, b.id); if (c) c.plannedCents = b.plannedCents; });
+    saveData();
+    render();
+  });
+});
+
+$('show-unused').addEventListener('click', () => {
+  showUnusedCategories = !showUnusedCategories;
+  render();
+});
+
 function renderBudget(summary) {
+  // Unused = nothing planned and nothing spent lately; hidden to keep the list short
+  const cur = summary.current;
+  const spentNow = c => cur ? (cur.spentByCategory[String(c.id)] || 0) : 0;
+  const isUnused = c => c.plannedCents === 0 && spentNow(c) === 0 && usualSpending(summary, c) === 0;
+  const unusedCount = data.categories.filter(isUnused).length;
+  $('show-unused').hidden = unusedCount === 0;
+  $('show-unused').textContent = showUnusedCategories ? 'Hide unused categories' : `Show ${unusedCount} unused categor${unusedCount === 1 ? 'y' : 'ies'}`;
+
   // Each row's inputs get ids so they can have real (hidden) labels
-  $('category-list').innerHTML = data.categories.map((c, i) => `
+  $('category-list').innerHTML = data.categories.map((c, i) => (isUnused(c) && !showUnusedCategories) ? '' : `
     <li class="edit-row">
       <label for="cat-name-${i}" class="visually-hidden">Category name</label>
       <input id="cat-name-${i}" data-cat-name="${escapeHtml(c.id)}" value="${escapeHtml(c.name)}">
       <label for="cat-planned-${i}" class="visually-hidden">Planned per paycheck for ${escapeHtml(c.name)}</label>
       <input id="cat-planned-${i}" data-cat-planned="${escapeHtml(c.id)}" type="number" inputmode="decimal" step="0.01" min="0" value="${centsToInput(c.plannedCents)}">
       ${deleteButton('categories', c.id, '✕')}
+      <p class="muted small cat-hint${c.plannedCents > 0 && spentNow(c) > c.plannedCents ? ' over' : ''}">${categoryHint(c, spentNow(c), usualSpending(summary, c))}</p>
     </li>`).join('');
 
   const planned = sum(data.categories, c => c.plannedCents);
-  const latest = sortedPaychecks()[0];
-  $('planned-total').textContent = `Planned: ${formatMoney(planned)}` + (latest ? ` of your last paycheck (${formatMoney(latest.amountCents)})` : '');
+  const pay = averageRecentPaycheck(); // forecast.js
+  $('planned-total').textContent = `Planned: ${formatMoney(planned)}` + (pay > 0
+    ? ` of your usual ${formatMoney(pay)} paycheck · ` + (planned > pay ? `${formatMoney(planned - pay)} over` : `${formatMoney(pay - planned)} not planned`)
+    : '');
 
   $('bill-list').innerHTML = data.bills.map(b => listItem(
     `${escapeHtml(b.name)} · ${formatMoney(b.amountCents)}
@@ -814,6 +909,13 @@ function renderBudget(summary) {
       deleteButton('funds', f.id)
     );
   }).join('');
+}
+
+// "This period $34.00 of $40.00 · usually $41.20"
+function categoryHint(c, spent, usual) {
+  const parts = [`This period ${formatMoney(spent)}${c.plannedCents > 0 ? ' of ' + formatMoney(c.plannedCents) : ''}`];
+  if (usual > 0) parts.push(`usually ${formatMoney(usual)}`);
+  return parts.join(' · ');
 }
 
 function renderPay() {
@@ -911,6 +1013,7 @@ onSubmit('income-form', 'income', () => {
 onSubmit('category-form', 'categories', () => {
   const name = $('category-name').value.trim();
   if (!name) return null;
+  showUnusedCategories = true; // so a new category with no plan doesn't vanish
   return { name, plannedCents: Math.max(dollarsToCents($('category-planned').value) || 0, 0) };
 });
 

@@ -754,6 +754,14 @@ body.locked > :not(#lock-screen) { display: none !important; }
 
 .edit-row input { margin: 0; padding: var(--s2); min-height: 36px; }
 .edit-row input[data-cat-planned] { width: 96px; flex: 0 0 auto; }
+.edit-row { flex-wrap: wrap; }
+.edit-row input[data-cat-name] { flex: 1 1 0; min-width: 0; width: auto; }
+.edit-row .cat-hint { flex-basis: 100%; margin: 0; }
+#auto-budget-btn { margin-bottom: var(--s2); }
+.auto-row { display: flex; gap: var(--s3); align-items: flex-start; }
+.auto-row input { flex: 0 0 auto; width: 20px; height: 20px; min-height: 0; margin: 2px 0 0; padding: 0; }
+.auto-row label { flex: 1; margin: 0; text-align: left; }
+.over { color: var(--danger); }
 
 /* ===== Pop-up, toast, tab bar ===== */
 
