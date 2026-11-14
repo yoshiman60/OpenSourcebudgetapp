@@ -310,7 +310,7 @@ function renderTimeline(summary, takeHome) {
       breakdownLine('Pay', p.income, '+', p.payHow + (p.whatIf ? ` (includes what-if ${p.whatIf > 0 ? '+' : '−'}${formatMoney(Math.abs(p.whatIf))})` : '')),
       ...p.billsDue.map(b => breakdownLine(`Bill: ${escapeHtml(b.name)}`, b.cents, '−')),
       ...p.fundParts.map(f => breakdownLine(`Fund: ${escapeHtml(f.name)}`, f.cents, '−')),
-      breakdownLine('Spending', p.spending.cents, '−', `Based on ${p.spending.how}`),
+      breakdownLine(paydays[i + 1] ? `Spending after payday (${formatShortDate(p.payday)} – ${formatShortDate(paydays[i + 1].payday)})` : 'Spending after payday', p.spending.cents, '−', `Based on ${p.spending.how}`),
       ...(p.advances ? [breakdownLine('Pay advances paid back', p.advances, '−', 'Advances taken since your last repayment')] : [])
     ];
     const worstNote = p.worstIncome < p.income
