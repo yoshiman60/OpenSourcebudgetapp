@@ -176,8 +176,9 @@ function guessColumns(headers) {
   return {
     date: Math.max(find(/date/i), 0),
     desc: Math.max(find(/desc|payee|merchant|name|memo|details/i), 0),
-    amount: amount >= 0 ? amount : Math.max(debit, 0),
-    credit: amount >= 0 ? -1 : credit
+    // Separate debit and credit columns win over a lone "amount" (e.g. "Debit Amount" / "Credit Amount")
+    amount: debit >= 0 && credit >= 0 && debit !== credit ? debit : amount >= 0 ? amount : Math.max(debit, 0),
+    credit: debit >= 0 && credit >= 0 && debit !== credit ? credit : amount >= 0 ? -1 : credit
   };
 }
 
@@ -215,7 +216,7 @@ function buildTransactions() {
 function startBankImport(text) {
   const rows = parseCsv(text);
   // Some banks put a few summary lines above the real header row
-  const headerIndex = rows.findIndex(r => r.length >= 3 && r.some(c => /date/i.test(c)));
+  const headerIndex = rows.findIndex(r => r.length >= 2 && r.some(c => /date/i.test(c)));
   if (headerIndex === -1) {
     alert("Couldn't find a header row with a Date column in that file.");
     return;
@@ -339,7 +340,7 @@ const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'se
 
 // Loads the PDF reader library the first time it's needed
 function loadPdfJs() {
-  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions.workerSrc) return Promise.resolve(window.pdfjsLib); // else retry (e.g. worker failed offline)
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
     script.src = PDFJS_URL;
@@ -430,8 +431,9 @@ function parseStatementLines(lines) {
     if (m[3]) {
       date = parseBankDate(`${month}/${day}/${m[3]}`);
     } else {
-      date = toDateString(new Date(endYear, month - 1, day));
-      if (date > addDays(endDate, 7)) date = toDateString(new Date(endYear - 1, month - 1, day)); // December on a January statement
+      date = realDate(endYear, month, day);
+      if (date && date > addDays(endDate, 7)) date = realDate(endYear - 1, month, day); // December on a January statement
+      if (!date) continue;
     }
 
     const description = m[4]

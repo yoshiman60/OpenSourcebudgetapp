@@ -1,7 +1,7 @@
 // Service worker: saves the app's files so it works offline.
 // Bump CACHE when you want old saved files thrown away.
 
-const CACHE = 'budget-v23';
+const CACHE = 'budget-v24';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'lock.js', 'savings.js', 'forecast.js', 'tips.js', 'bank.js', 'backups.js', 'manifest.json', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {

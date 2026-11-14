@@ -66,6 +66,12 @@ function getTips(summary) {
     return tips;
   }
 
+  // Pay-stub check: latest paycheck much lower than the shifts logged for it
+  const check = latestPay ? paystubCheck(latestPay) : null; // forecast.js
+  if (check && check.short) {
+    add(`paystub-${latestPay.id}`, `Your ${formatShortDate(latestPay.date)} paycheck was ${formatMoney(latestPay.amountCents)}, but your ${check.hours} h of logged shifts should pay about ${formatMoney(check.expected)}. Check your pay stub for missing hours.`);
+  }
+
   const daysLeft = daysBetween(today(), cur.end);
   const daysTotal = daysBetween(cur.start, cur.end);
   const daysGone = Math.min(daysTotal, Math.max(1, daysBetween(cur.start, today()) + 1));

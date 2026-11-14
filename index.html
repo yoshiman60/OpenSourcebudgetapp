@@ -110,6 +110,14 @@
         </div>
         <p id="pie-empty" class="muted">No spending to show yet.</p>
       </section>
+
+      <section class="card">
+        <h2>Monthly report</h2>
+        <label for="report-month">Month</label>
+        <select id="report-month"></select>
+        <ul id="report-body" class="list"></ul>
+        <p id="report-top" class="muted small"></p>
+      </section>
     </div>
 
     <!-- ===== Budget tab: categories, goal, bills, funds, IOUs ===== -->
@@ -180,7 +188,8 @@
           <button type="button" id="fc-plus" class="secondary">+1 shift</button>
         </div>
 
-        <h3>Upcoming shifts</h3>
+        <h3>Shifts</h3>
+        <p class="muted small">Log past shifts too: each paycheck on this tab is checked against the hours it should cover.</p>
         <form id="shift-form" class="row">
           <div>
             <label for="shift-date">Date</label>
@@ -269,6 +278,33 @@
           <button type="submit">Add income</button>
         </form>
         <ul id="income-list" class="list"></ul>
+
+        <details class="more">
+          <summary>Repeating income</summary>
+          <p class="muted small">Tips, a side gig or an allowance that comes on a schedule. It's added to Extra income on each date, and the forecast counts it.</p>
+          <form id="income-rule-form">
+            <div class="row">
+              <div>
+                <label for="rule-amount">Amount ($)</label>
+                <input id="rule-amount" type="number" inputmode="decimal" step="0.01" min="0.01" required>
+              </div>
+              <div>
+                <label for="rule-every">Every</label>
+                <select id="rule-every">
+                  <option value="week">Week</option>
+                  <option value="2weeks">2 weeks</option>
+                  <option value="month">Month</option>
+                </select>
+              </div>
+            </div>
+            <label for="rule-date">Next date</label>
+            <input id="rule-date" type="date" required>
+            <label for="rule-note">Note</label>
+            <input id="rule-note" placeholder="Allowance">
+            <button type="submit">Add repeating income</button>
+          </form>
+          <ul id="income-rule-list" class="list"></ul>
+        </details>
       </section>
 
       <section class="card">
@@ -348,6 +384,10 @@
 
         <label for="spotme-cushion">Keep this much SpotMe free in "Can I afford it?" ($)</label>
         <input id="spotme-cushion" type="number" inputmode="decimal" step="0.01" min="0">
+
+        <label for="tax-percent">Set aside for taxes (% of each paycheck and extra income, 0 = off)</label>
+        <input id="tax-percent" type="number" inputmode="decimal" step="1" min="0" max="50" placeholder="0">
+        <p id="tax-total" class="muted small"></p>
 
         <div class="check">
           <input type="checkbox" id="roundup-enabled">

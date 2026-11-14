@@ -126,6 +126,10 @@ $('unlock-form').addEventListener('submit', async e => {
     error.textContent = `Too many tries. Wait ${Math.ceil((triesBlockedUntil - Date.now()) / 1000)} seconds.`;
     return;
   }
+  if (!isLockedBox(storedBox())) {
+    error.textContent = "Your saved data is damaged and can't be opened. Erase and restore a backup.";
+    return;
+  }
   error.textContent = 'Unlocking…';
   $('unlock-btn').disabled = true;
   let opened = null;
@@ -243,10 +247,18 @@ $('lock-off').addEventListener('click', async () => {
     alert('Type your current passcode first.');
     return;
   }
+  const oldKey = lockKey, oldSalt = lockSalt;
   lockKey = null;
   lockSalt = null;
   await saveQueue; // a locked save started during the check must finish first
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch {
+    lockKey = oldKey;
+    lockSalt = oldSalt;
+    alert("Couldn't turn the lock off: storage is full. Free up space and try again.");
+    return;
+  }
   localStorage.removeItem(LOCKED_KEY);
   $('lock-change-form').reset();
   renderLockSettings();

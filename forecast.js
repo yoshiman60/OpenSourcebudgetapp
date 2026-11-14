@@ -49,6 +49,22 @@ function averageShiftHours() {
   return sum(shifts, s => s.hours) / shifts.length;
 }
 
+// Pay-stub check: does a paycheck match the shifts logged for it?
+function paystubCheck(paycheck) {
+  const rate = data.hourlyRateCents;
+  const w = workWindow(paycheck.date);
+  const hours = hoursBetween(w.start, w.end);
+  if (!(rate > 0) || hours <= 0) return null;
+  const expected = Math.round(hours * rate * getTakeHome().rate);
+  return { hours, expected, short: expected - paycheck.amountCents >= Math.max(1000, expected * 0.1) };
+}
+
+function paystubNote(paycheck) {
+  const check = paystubCheck(paycheck);
+  if (!check) return '';
+  return `<div class="muted small${check.short ? ' over' : ''}">${check.hours} h logged · expected about ${formatMoney(check.expected)}${check.short ? ' · check your pay stub' : ''}</div>`;
+}
+
 // ===== Take-home rate =====
 // Compares real paychecks with hours × rate for the shifts they paid for.
 // Kept between 50% and 100%: a higher number usually means some shifts weren't entered.
@@ -116,9 +132,9 @@ function expectedSpending(summary) {
 
   const finished = summary ? summary.periods.slice(0, -1).slice(-3) : [];
   if (finished.length === 0) return { cents: 0, how: 'no finished pay periods yet' };
-  const loans = findCategoryByName('Loans & Advances');
+  const skipIds = ['Loans & Advances', 'Savings'].map(findCategoryByName).filter(Boolean).map(c => String(c.id));
   const perPeriod = finished.map(p => sum(
-    data.expenses.filter(e => e.date >= p.start && e.date < p.end && !(loans && String(e.categoryId) === String(loans.id))),
+    data.expenses.filter(e => e.date >= p.start && e.date < p.end && !skipIds.includes(String(e.categoryId)) && !e.goalId && !e.fundId),
     e => e.amountCents
   ));
   return {
@@ -164,6 +180,8 @@ function renderWhatIf(takeHome) {
 // The first payday to show: your next payday, or (with no paychecks yet)
 // one pay period after your first upcoming shift
 function firstForecastPayday() {
+  const missed = missedPayday(); // paycheck not added yet: still show it
+  if (missed) return missed;
   const next = getNextPayday();
   if (next) return next;
   const upcoming = allShifts().filter(s => s.date >= today()).map(s => s.date).sort();
@@ -238,7 +256,7 @@ function buildForecast(summary, takeHome) {
     const worstIncome = custom || !range ? income : Math.max(Math.min(range.min, income - whatIf) + whatIf, 0);
 
     const billsDue = data.bills
-      .map(b => ({ name: b.name, cents: billDatesInPeriod(b, { start: payday, end: periodEnd }).length * b.amountCents }))
+      .map(b => ({ name: b.name, cents: billDatesInPeriod(b, { start: i === 0 && cur && cur.end > payday ? cur.end : payday, end: periodEnd }).length * b.amountCents }))
       .filter(b => b.cents > 0);
 
     const fundParts = [];
@@ -249,17 +267,19 @@ function buildForecast(summary, takeHome) {
     });
 
     const advances = i === 0 ? owedAdvances() : 0;
-    const out = sum(billsDue, b => b.cents) + sum(fundParts, f => f.cents) + spending.cents + advances;
+    const ruleIncome = incomeRulesBetween(i === 0 && cur && cur.end > payday ? cur.end : payday, periodEnd);
+    const tax = Math.round((income + ruleIncome) * data.taxPercent / 100);
+    const out = sum(billsDue, b => b.cents) + sum(fundParts, f => f.cents) + spending.cents + advances + tax;
 
-    balance += income - out;
-    worstBalance += worstIncome - out;
+    balance += income + ruleIncome - out;
+    worstBalance += worstIncome + ruleIncome - out;
 
     paydays.push({
       payday, startBalance, income, payHow, custom, fewShifts, whatIf, worstIncome,
       leftNow: i === 0 ? leftNow : null,
       spendBeforePayday: i === 0 ? spendBeforePayday : 0,
       daysToPayday,
-      billsDue, fundParts, spending, advances, out, balance, worstBalance
+      billsDue, fundParts, spending, advances, out, balance, worstBalance, ruleIncome, tax
     });
   }
   return paydays;
@@ -308,10 +328,12 @@ function renderTimeline(summary, takeHome) {
     const lines = [
       ...startLines,
       breakdownLine('Pay', p.income, '+', p.payHow + (p.whatIf ? ` (includes what-if ${p.whatIf > 0 ? '+' : '−'}${formatMoney(Math.abs(p.whatIf))})` : '')),
+      ...(p.ruleIncome ? [breakdownLine('Repeating income', p.ruleIncome, '+', 'Your repeating extra income')] : []),
       ...p.billsDue.map(b => breakdownLine(`Bill: ${escapeHtml(b.name)}`, b.cents, '−')),
       ...p.fundParts.map(f => breakdownLine(`Fund: ${escapeHtml(f.name)}`, f.cents, '−')),
       breakdownLine(paydays[i + 1] ? `Spending after payday (${formatShortDate(p.payday)} – ${formatShortDate(paydays[i + 1].payday)})` : 'Spending after payday', p.spending.cents, '−', `Based on ${p.spending.how}`),
-      ...(p.advances ? [breakdownLine('Pay advances paid back', p.advances, '−', 'Advances taken since your last repayment')] : [])
+      ...(p.advances ? [breakdownLine('Pay advances paid back', p.advances, '−', 'Advances taken since your last repayment')] : []),
+      ...(p.tax ? [breakdownLine('Set aside for taxes', p.tax, '−', `${data.taxPercent}% of pay`)] : [])
     ];
     const worstNote = p.worstIncome < p.income
       ? `<p class="muted small">If this paycheck is as low as your lowest recent one (${formatMoney(p.worstIncome)}), you'd have ${formatMoney(p.worstBalance)} left.</p>`
@@ -369,7 +391,7 @@ function renderShiftList() {
     );
   }).join('') +
     (upcoming.length === 0 ? '<li class="muted">No upcoming shifts yet.</li>' : '') +
-    (pastCount > 0 ? `<li class="muted small">${pastCount} past shift${pastCount === 1 ? '' : 's'} (used to learn your take-home pay)</li>` : '');
+    (pastCount > 0 ? `<li class="muted small">${pastCount} past shift${pastCount === 1 ? '' : 's'} (used to check paychecks and learn your take-home pay)</li>` : '');
 }
 
 // ===== Render =====

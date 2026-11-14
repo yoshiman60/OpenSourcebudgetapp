@@ -39,7 +39,10 @@ function defaultData() {
     spotMeCushionCents: 1000, // "Can I afford it?" keeps this much SpotMe free
     hourlyRateCents: 0,
     lowWarningCents: 1000, // warn when safe-per-day drops below this (0 = off)
-    rollover: 'off'        // 'off' | 'next' | 'savings'
+    rollover: 'off',       // 'off' | 'next' | 'savings'
+    incomeRules: [],       // repeating income: { id, amountCents, every: 'week' | '2weeks' | 'month', nextDate, dueDay, note }
+    taxPercent: 0,         // % of earned income set aside for taxes (0 = off)
+    taxStartDate: null     // set-aside counts from this date (when it was turned on)
   };
 }
 
@@ -91,7 +94,7 @@ function cleanTextMap(map) {
 }
 
 function sanitizeData(d) {
-  const lists = ['paychecks', 'income', 'categories', 'expenses', 'bills', 'funds', 'ious', 'adjustments', 'shifts', 'goals'];
+  const lists = ['paychecks', 'income', 'categories', 'expenses', 'bills', 'funds', 'ious', 'adjustments', 'shifts', 'goals', 'incomeRules'];
   for (const key of lists) {
     if (key in d) d[key] = Array.isArray(d[key]) ? d[key].map(cleanItem).filter(Boolean) : [];
   }
@@ -102,8 +105,9 @@ function sanitizeData(d) {
   for (const key of lists) {
     if (!(key in d)) continue;
     d[key].forEach(x => {
-      if (x.id === undefined) x.id = newId();
-      if (['paychecks', 'income', 'expenses', 'adjustments', 'ious'].includes(key)) x.amountCents = toCents(x.amountCents);
+      if (x.id == null || x.id === '') x.id = newId();
+      if (['paychecks', 'income', 'expenses', 'adjustments', 'ious', 'bills', 'incomeRules'].includes(key)) x.amountCents = toCents(x.amountCents);
+      if (key === 'funds') { x.goalCents = toCents(x.goalCents); x.perPaycheckCents = toCents(x.perPaycheckCents); }
       if (['categories', 'bills', 'funds', 'goals'].includes(key)) x.name = String(x.name ?? '');
     });
   }
@@ -113,12 +117,14 @@ function sanitizeData(d) {
   for (const key of ['importedKeys', 'dismissedTips', 'sweptPeriods']) {
     if (key in d) d[key] = Array.isArray(d[key]) ? d[key].map(String) : [];
   }
+  if ('incomeRules' in d) d.incomeRules = d.incomeRules.filter(r => isDate(r.nextDate) && ['week', '2weeks', 'month'].includes(r.every));
+  d.taxPercent = Math.min(Math.max(Number(d.taxPercent) || 0, 0), 50);
   d.payFrequencyDays = Number(d.payFrequencyDays) === 7 ? 7 : 14;
   if (!['off', 'next', 'savings'].includes(d.rollover)) d.rollover = 'off';
   d.merchantRules = cleanTextMap(d.merchantRules);
   d.savingsGoalName = String(d.savingsGoalName || '');
   d.categoriesVersion = Number(d.categoriesVersion) || 1;
-  for (const key of ['lastBackupDate', 'nudgeDismissed']) {
+  for (const key of ['lastBackupDate', 'nudgeDismissed', 'taxStartDate']) {
     if (key in d) d[key] = isDate(d[key]) ? d[key] : null;
   }
   if ('defaultGoalId' in d) d.defaultGoalId = d.defaultGoalId === null ? null : String(d.defaultGoalId);
@@ -345,6 +351,43 @@ function billDatesInPeriod(bill, period) {
   return dates;
 }
 
+// ===== Repeating income =====
+
+function nextRuleDate(rule, date) {
+  if (rule.every === 'week') return addDays(date, 7);
+  if (rule.every === '2weeks') return addDays(date, 14);
+  const d = parseDate(date); // monthly: same day next month (or the last day if it's shorter)
+  const lastDay = new Date(d.getFullYear(), d.getMonth() + 2, 0).getDate();
+  return toDateString(new Date(d.getFullYear(), d.getMonth() + 1, Math.min(rule.dueDay || d.getDate(), lastDay)));
+}
+
+// Adds each rule's income to Extra income once its date arrives
+function applyIncomeRules() {
+  let added = false;
+  data.incomeRules.forEach(r => {
+    for (let guard = 0; r.nextDate <= today() && guard < 400; guard++) {
+      data.income.push({ id: newId(), amountCents: r.amountCents, date: r.nextDate, note: r.note, ruleId: r.id });
+      r.nextDate = nextRuleDate(r, r.nextDate);
+      added = true;
+    }
+  });
+  if (added) saveData();
+}
+
+// Repeating income still to come in [start, end), for the forecast
+function incomeRulesBetween(start, end) {
+  let total = 0;
+  data.incomeRules.forEach(r => {
+    for (let date = r.nextDate, guard = 0; date < end && guard < 400; date = nextRuleDate(r, date), guard++) {
+      if (date >= start) total += r.amountCents;
+    }
+  });
+  return total;
+}
+
+// Money you earned (not money moved back out of savings)
+const isEarnedIncome = x => !x.goalId && !x.fromSavings && !/from .*savings/i.test(x.note || '');
+
 // Works out the numbers for every pay period, oldest first.
 // Goes in order because leftovers and semester funds build up over time.
 function summarize() {
@@ -361,6 +404,10 @@ function summarize() {
     p.carryInCents = carry; // only negatives carry unless rollover is "next" (see below)
     p.extraCents = sum(data.income.filter(inPeriod), x => x.amountCents);
     p.adjustCents = sum(data.adjustments.filter(inPeriod), x => x.amountCents);
+    // Tax set-aside: a % of what you earned since it was turned on
+    const taxed = x => inPeriod(x) && data.taxPercent > 0 && data.taxStartDate && x.date >= data.taxStartDate;
+    p.taxCents = Math.round((sum(data.paychecks.filter(taxed), x => x.amountCents) +
+      sum(data.income.filter(x => taxed(x) && isEarnedIncome(x)), x => x.amountCents)) * data.taxPercent / 100);
 
     // Spending per category (expenses + bills)
     p.spentByCategory = {};
@@ -396,7 +443,7 @@ function summarize() {
       p.fundCents -= use;
     });
 
-    p.leftCents = p.paycheckCents + p.extraCents + p.adjustCents + p.carryInCents - p.expenseCents - p.billCents - p.fundCents;
+    p.leftCents = p.paycheckCents + p.extraCents + p.adjustCents + p.carryInCents - p.expenseCents - p.billCents - p.fundCents - p.taxCents;
 
     // Leftovers from finished periods roll forward (or into savings)
     const isCurrent = i === periods.length - 1;
@@ -414,7 +461,8 @@ function summarize() {
   const savingsCents = savedFromLeftovers - takenOutCents + data.savingsAdjustCents +
     (savingsCategory ? sum(periods, p => p.spentByCategory[String(savingsCategory.id)] || 0) : 0);
 
-  return { periods, current: periods[periods.length - 1] || null, fundSaved, fundSpent, savedFromLeftovers, savingsCents };
+  return { periods, current: periods[periods.length - 1] || null, fundSaved, fundSpent, savedFromLeftovers, savingsCents,
+    taxCents: sum(periods, p => p.taxCents) };
 }
 
 // How many finished pay periods in a row (most recent first) ended with money left
@@ -506,6 +554,13 @@ function showToast(message, onUndo) {
   toastTimer = setTimeout(() => toast.hidden = true, 5000);
 }
 
+// Close the toast so an old Undo can't bring back data that was just replaced
+function dismissToast() {
+  clearTimeout(toastTimer);
+  $('toast').hidden = true;
+  $('toast-undo').onclick = null;
+}
+
 function removeWithUndo(listName, id) {
   const list = data[listName];
   const index = list.findIndex(item => String(item.id) === String(id));
@@ -529,12 +584,14 @@ function removeWithUndo(listName, id) {
 let lastSummary = null;
 
 function render() {
+  applyIncomeRules();
   const summary = summarize();
   lastSummary = summary;
   fillCategorySelects();
   renderHome(summary);
   renderTips(summary); // in tips.js
   renderHistory(summary);
+  renderReport();
   renderBudget(summary);
   renderSavings(summary); // in savings.js
   renderPay();
@@ -755,6 +812,69 @@ function renderHistory(summary) {
 const PIE_COLORS = ['#4caf50', '#42a5f5', '#fbc02d', '#ab47bc', '#ef5350', '#26c6da', '#ff7043', '#8d6e63'];
 
 // Pie chart of spending by category, drawn with a CSS conic-gradient
+// ===== Monthly report =====
+
+let reportMonth = null;
+
+function monthReport(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  const start = `${ym}-01`;
+  const end = toDateString(new Date(y, m, 1));
+  const inMonth = x => x.date >= start && x.date < end;
+  const byCategory = {};
+  const add = (id, cents) => byCategory[id] = (byCategory[id] || 0) + cents;
+  let saved = 0;
+  data.expenses.filter(inMonth).forEach(e => isSave(e) ? saved += e.amountCents : add(String(e.categoryId), e.amountCents)); // isSave: savings.js
+  let bills = 0;
+  data.bills.forEach(b => {
+    const cents = billDatesInPeriod(b, { start, end }).length * b.amountCents;
+    if (cents) { bills += cents; add(String(b.categoryId), cents); }
+  });
+  return {
+    pay: sum(data.paychecks.filter(inMonth), x => x.amountCents),
+    extra: sum(data.income.filter(x => inMonth(x) && isEarnedIncome(x)), x => x.amountCents),
+    spent: sum(Object.values(byCategory), c => c),
+    saved, bills, byCategory
+  };
+}
+
+function monthName(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+}
+
+function renderReport() {
+  const thisMonth = today().slice(0, 7);
+  const months = new Set([thisMonth]);
+  for (const key of ['paychecks', 'income', 'expenses']) data[key].forEach(x => months.add(x.date.slice(0, 7)));
+  const list = [...months].filter(m => m <= thisMonth).sort().reverse().slice(0, 12);
+  if (!list.includes(reportMonth)) reportMonth = list[1] || list[0]; // last full month to start
+  $('report-month').innerHTML = list.map(m => `<option value="${m}">${monthName(m)}${m === thisMonth ? ' (so far)' : ''}</option>`).join('');
+  $('report-month').value = reportMonth;
+
+  const r = monthReport(reportMonth);
+  const [y, m] = reportMonth.split('-').map(Number);
+  const prevMonth = toDateString(new Date(y, m - 2, 1)).slice(0, 7);
+  const prev = monthReport(prevMonth);
+  const diff = r.spent - prev.spent;
+  const compare = prev.spent > 0 ? ` · ${diff >= 0 ? '↑' : '↓'} ${formatMoney(Math.abs(diff))} vs ${monthName(prevMonth).split(' ')[0]}` : '';
+  const left = r.pay + r.extra - r.spent - r.saved;
+  $('report-body').innerHTML = [
+    listItem(`Money in<div class="muted small">Paychecks ${formatMoney(r.pay)} · Extra ${formatMoney(r.extra)}</div>`, formatMoney(r.pay + r.extra)),
+    listItem(`Spent<div class="muted small">Bills ${formatMoney(r.bills)}${compare}</div>`, formatMoney(r.spent)),
+    listItem('Saved', formatMoney(r.saved)),
+    listItem('<strong>Left over</strong>', `<strong class="${left < 0 ? 'over' : ''}">${formatMoney(left)}</strong>`)
+  ].join('');
+  const top = Object.entries(r.byCategory).sort((a, b) => b[1] - a[1]).slice(0, 3)
+    .map(([id, cents]) => `${(findById(data.categories, id) || { name: 'Other' }).name} ${formatMoney(cents)}`);
+  $('report-top').textContent = top.length ? `Top spending: ${top.join(' · ')}` : 'No spending this month.';
+}
+
+$('report-month').addEventListener('change', e => {
+  reportMonth = e.target.value;
+  renderReport();
+});
+
 function renderPie(periods) {
   const totals = {};
   periods.forEach(p => {
@@ -892,11 +1012,18 @@ function renderBudget(summary) {
     ? ` of your usual ${formatMoney(pay)} paycheck · ` + (planned > pay ? `${formatMoney(planned - pay)} over` : `${formatMoney(pay - planned)} not planned`)
     : '');
 
-  $('bill-list').innerHTML = data.bills.map(b => listItem(
-    `${escapeHtml(b.name)} · ${formatMoney(b.amountCents)}
-     <div class="muted small">Due on day ${Number(b.dueDay)} ·${escapeHtml(categoryName(b.categoryId))}</div>`,
-    deleteButton('bills', b.id)
-  )).join('');
+  // Soonest due first, with a reminder for bills due in the next 3 days
+  const nextDue = b => billDatesInPeriod(b, { start: today(), end: addDays(today(), 32) })[0] || '9999';
+  $('bill-list').innerHTML = [...data.bills].sort((a, b) => nextDue(a).localeCompare(nextDue(b))).map(b => {
+    const due = nextDue(b);
+    const days = due === '9999' ? null : daysBetween(today(), due);
+    const when = days === null ? '' : days === 0 ? 'due today' : days === 1 ? 'due tomorrow' : `next ${formatShortDate(due)}`;
+    return listItem(
+      `${escapeHtml(b.name)} · ${formatMoney(b.amountCents)}
+     <div class="muted small">Due on day ${Number(b.dueDay)} ·${escapeHtml(categoryName(b.categoryId))}${when ? ` · <span class="${days <= 3 ? 'over' : ''}">${when}</span>` : ''}</div>`,
+      deleteButton('bills', b.id)
+    );
+  }).join('');
 
   $('fund-list').innerHTML = data.funds.map(f => {
     const saved = summary.fundSaved[f.id] || 0;
@@ -924,7 +1051,7 @@ function renderPay() {
   $('frequency').value = String(data.payFrequencyDays);
 
   $('paycheck-list').innerHTML = sortedPaychecks().map(p => listItem(
-    `${formatDate(p.date)} · ${formatMoney(p.amountCents)}`,
+    `${formatDate(p.date)} · ${formatMoney(p.amountCents)}${paystubNote(p)}`,
     deleteButton('paychecks', p.id)
   )).join('');
 
@@ -937,6 +1064,17 @@ function renderPay() {
     `${formatDate(x.date)} · ${x.amountCents > 0 ? '+' : ''}${formatMoney(x.amountCents)}<div class="muted small">${escapeHtml(x.note)}</div>`,
     deleteButton('adjustments', x.id)
   )).join('');
+
+  const everyLabel = { week: 'every week', '2weeks': 'every 2 weeks', month: 'every month' };
+  $('income-rule-list').innerHTML = data.incomeRules.map(r => listItem(
+    `${formatMoney(r.amountCents)} ${everyLabel[r.every]} · next ${formatDate(r.nextDate)}${r.note ? `<div class="muted small">${escapeHtml(r.note)}</div>` : ''}`,
+    deleteButton('incomeRules', r.id, 'Stop')
+  )).join('');
+
+  $('tax-percent').value = data.taxPercent || '';
+  $('tax-total').textContent = data.taxPercent > 0 && lastSummary
+    ? `Set aside so far: ${formatMoney(lastSummary.taxCents)}. It comes out of your money left each pay period; move it to savings so it's there at tax time.`
+    : '';
 
   $('rollover').value = data.rollover;
   $('low-warning-setting').value = centsToInput(data.lowWarningCents);
@@ -1081,7 +1219,10 @@ document.addEventListener('change', e => {
     const category = findById(data.categories, d.catName);
     category.name = e.target.value.trim() || category.name;
   } else if (d.catPlanned) {
-    findById(data.categories, d.catPlanned).plannedCents = Math.max(dollarsToCents(e.target.value) || 0, 0);
+    const category = findById(data.categories, d.catPlanned);
+    const cents = e.target.value.trim() === '' ? 0 : dollarsToCents(e.target.value);
+    if (e.target.validity.badInput || Number.isNaN(cents)) { e.target.value = centsToInput(category.plannedCents); return; } // typo: keep the old plan
+    category.plannedCents = Math.max(cents, 0);
   } else {
     return;
   }
@@ -1127,6 +1268,21 @@ $('low-warning-setting').addEventListener('change', e => {
   data.lowWarningCents = Math.max(dollarsToCents(e.target.value) || 0, 0);
   saveData();
   render();
+});
+
+$('tax-percent').addEventListener('change', e => {
+  const percent = Math.min(Math.max(Number(e.target.value) || 0, 0), 50);
+  if (percent > 0 && !(data.taxPercent > 0)) data.taxStartDate = today(); // only paychecks from now on
+  data.taxPercent = percent;
+  saveData();
+  render();
+});
+
+onSubmit('income-rule-form', 'incomeRules', () => {
+  const amountCents = dollarsToCents($('rule-amount').value);
+  const date = $('rule-date').value;
+  if (!(amountCents > 0) || !isDate(date)) return null;
+  return { amountCents, every: $('rule-every').value, nextDate: date, dueDay: parseDate(date).getDate(), note: $('rule-note').value.trim() };
 });
 
 $('spotme-limit').addEventListener('change', e => {
@@ -1178,6 +1334,7 @@ $('export-btn').addEventListener('click', async () => {
 // Start over with the default categories and nothing else
 $('erase-btn').addEventListener('click', () => {
   if (!confirm('Erase everything in this app and start over? Export a backup first if you might want it back.')) return;
+  dismissToast();
   data = defaultData();
   saveData();
   localStorage.removeItem(STORAGE_KEY + '-unreadable');
@@ -1192,6 +1349,7 @@ $('erase-btn').addEventListener('click', () => {
 function restoreBackup(backup) {
   if (!confirm('Replace all your current data with this backup?')) return;
   // Checked and upgraded the same way as a normal save, then saved (encrypted if the lock is on)
+  dismissToast();
   data = prepareData(JSON.parse(JSON.stringify(backup)));
   saveData();
   historyPeriod = null;

@@ -311,7 +311,10 @@ function pickNudge(summary) {
     headroom = cur.leftCents - data.lowWarningCents * daysLeft;
   } else {
     const daysSoFar = Math.max(daysBetween(cur.start, today()) + 1, 1);
-    const spent = cur.expenseCents + cur.billCents - sum(savesInPeriod(cur), e => e.amountCents);
+    // Everyday spending only: bills are already out of leftCents, and saves/repayments aren't a daily pace
+    const oneTimeIds = ['Loans & Advances', 'Fees', 'Savings'].map(findCategoryByName).filter(Boolean).map(c => String(c.id));
+    const spent = sum(data.expenses.filter(e => e.date >= cur.start && e.date < cur.end && !isSave(e) &&
+      !oneTimeIds.includes(String(e.categoryId))), e => e.amountCents);
     headroom = Math.min(cur.leftCents - Math.ceil(Math.max(spent, 0) / daysSoFar) * daysLeft, cur.leftCents);
   }
   if (headroom <= 0) return null;
